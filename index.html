@@ -1,540 +1,605 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { initializeApp } from 'firebase/app';
-import { 
-  getAuth, 
-  signInAnonymously, 
-  onAuthStateChanged,
-  signInWithCustomToken
-} from 'firebase/auth';
-import { 
-  getFirestore, 
-  collection, 
-  addDoc, 
-  onSnapshot, 
-  query, 
-  serverTimestamp 
-} from 'firebase/firestore';
-import { 
-  Globe, 
-  UserCheck, 
-  Users, 
-  Clock, 
-  CheckCircle, 
-  BrainCircuit,
-  LayoutDashboard,
-  Send,
-  Ticket,
-  AlertCircle
-} from 'lucide-react';
-
-// --- Configuration ---
-// 22 組符合規則的驗證碼 (第一碼對應組別)
-// G1(5人), G2(4人), G3(5人), G4(4人), G5(4人)
-const VALID_CODES = [
-  // Group 1 (5 codes)
-  "1088", "1243", "1597", "1821", "1905",
-  // Group 2 (4 codes)
-  "2156", "2384", "2609", "2972",
-  // Group 3 (5 codes)
-  "3042", "3218", "3567", "3891", "3955",
-  // Group 4 (4 codes)
-  "4129", "4483", "4675", "4908",
-  // Group 5 (4 codes)
-  "5234", "5512", "5789", "5946"
-];
-
-// --- Firebase Initialization ---
-const firebaseConfig = JSON.parse(__firebase_config);
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-
-// --- Translations ---
-const TRANSLATIONS = {
-  en: {
-    title: "PMCS Check-in System",
-    subtitle: "Introduction to Project Management and Career Strategy as a Product Manager in the AI era",
-    checkIn: "Check In",
-    dashboard: "Live Dashboard",
-    cnName: "Chinese Name",
-    enName: "English Name",
-    group: "Group Number",
-    code: "Access Code",
-    submit: "Submit Attendance",
-    submitting: "Submitting...",
-    success: "Check-in Successful!",
-    recentCheckins: "Recent Check-ins",
-    totalCount: "Total Checked In",
-    latest: "Latest Activity",
-    placeholderCn: "e.g., 王小明",
-    placeholderEn: "e.g., Jeremy Wang",
-    placeholderCode: "4-digit code (starts with group #)",
-    selectGroup: "Select Group",
-    groupOption: "Group",
-    waiting: "Waiting for check-ins...",
-    time: "Time (CST)",
-    language: "中文",
-    errorFill: "Please fill in all required fields.",
-    errorCode: "Invalid Code. Please contact TA.",
-    errorCodeUsed: "This code has already been used.",
-    errorGroupMatch: "Code must start with your Group Number (e.g., Group 1 uses 1xxx).",
-    remainingCodes: "Codes Remaining"
-  },
-  zh: {
-    title: "PMCS 課程點名系統",
-    subtitle: "AI世代產品經理職涯策略與專案管理導論",
-    checkIn: "學生簽到",
-    dashboard: "即時看板",
-    cnName: "中文姓名",
-    enName: "英文姓名",
-    group: "分組組別",
-    code: "專屬驗證碼",
-    submit: "送出簽到",
-    submitting: "送出中...",
-    success: "簽到成功！",
-    recentCheckins: "最新簽到名單",
-    totalCount: "已簽到人數",
-    latest: "最新動態",
-    placeholderCn: "例如：王小明",
-    placeholderEn: "例如：Jeremy Wang",
-    placeholderCode: "4 碼數字 (首碼需與組別相同)",
-    selectGroup: "請選擇組別",
-    groupOption: "第", 
-    groupSuffix: "組",
-    waiting: "等待簽到中...",
-    time: "時間 (中原標準)",
-    language: "English",
-    errorFill: "請填寫所有必填欄位。",
-    errorCode: "驗證碼無效，請洽詢助教 (TA)。",
-    errorCodeUsed: "此驗證碼已被使用，請勿重複簽到。",
-    errorGroupMatch: "驗證碼首碼必須與您的組別相符 (例：第 1 組需輸入 1xxx)。",
-    remainingCodes: "剩餘可用代碼"
-  }
-};
-
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [lang, setLang] = useState('zh'); 
-  const [checkins, setCheckins] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
-  const [errorMsg, setErrorMsg] = useState('');
-  
-  // Form State
-  const [formData, setFormData] = useState({
-    cnName: '',
-    enName: '',
-    group: '',
-    code: ''
-  });
-
-  const t = TRANSLATIONS[lang];
-
-  // --- Auth & Data Fetching ---
-  useEffect(() => {
-    const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PMCS Check-in System</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        /* Custom animation for success message */
+        @keyframes fadeInZoom {
+            from { opacity: 0; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
         }
-      } catch (e) {
-        console.error("Auth error", e);
-      }
-    };
-    initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
-    return () => unsubscribe();
-  }, []);
+        .animate-fade-in-zoom {
+            animation: fadeInZoom 0.3s ease-out forwards;
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-800 font-sans selection:bg-indigo-100 pb-12">
 
-  useEffect(() => {
-    if (!user) return;
-
-    // Fetch all public data (Simple query to avoid index requirements)
-    const q = query(
-      collection(db, 'artifacts', appId, 'public', 'data', 'pmcs_checkins')
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        timestamp: doc.data().timestamp?.toDate() || new Date()
-      }));
-      
-      // Sort in memory to satisfy robust system requirements (descending time)
-      data.sort((a, b) => b.timestamp - a.timestamp);
-      
-      setCheckins(data);
-    }, (error) => {
-      console.error("Error fetching checkins:", error);
-    });
-
-    return () => unsubscribe();
-  }, [user]);
-
-  // --- Handlers ---
-  const handleInputChange = (e) => {
-    const { name, value } = e.target;
-    // Auto-uppercase for code
-    const finalValue = name === 'code' ? value.toUpperCase().trim() : value;
-    
-    setFormData(prev => ({ ...prev, [name]: finalValue }));
-    setErrorMsg(''); 
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setErrorMsg('');
-
-    // 1. Basic Validation
-    if (!user || !formData.cnName || !formData.group || !formData.code) {
-      setErrorMsg(t.errorFill);
-      return;
-    }
-
-    const inputCode = formData.code;
-    const selectedGroup = String(formData.group);
-
-    // 2. Group Prefix Validation
-    if (!inputCode.startsWith(selectedGroup)) {
-      setErrorMsg(t.errorGroupMatch);
-      return;
-    }
-
-    // 3. Allow-list Verification (Is it a valid code?)
-    if (!VALID_CODES.includes(inputCode)) {
-      setErrorMsg(t.errorCode);
-      return;
-    }
-
-    // 4. Duplicate Usage Verification (Has it been used?)
-    const codeAlreadyUsed = checkins.some(record => 
-      record.code === inputCode
-    );
-
-    if (codeAlreadyUsed) {
-      setErrorMsg(t.errorCodeUsed);
-      return;
-    }
-
-    setLoading(true);
-    try {
-      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'pmcs_checkins'), {
-        cnName: formData.cnName,
-        enName: formData.enName,
-        group: formData.group,
-        code: inputCode, 
-        userId: user.uid,
-        timestamp: serverTimestamp()
-      });
-      
-      setSubmitted(true);
-      setFormData({ cnName: '', enName: '', group: '', code: '' });
-      
-      setTimeout(() => setSubmitted(false), 3000);
-    } catch (error) {
-      console.error("Error submitting checkin:", error);
-      setErrorMsg("Error submitting. Please try again.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const toggleLang = () => {
-    setLang(prev => prev === 'en' ? 'zh' : 'en');
-  };
-
-  // Force Asia/Taipei timezone formatting
-  const formatTime = (date) => {
-    try {
-      if (!date) return '--:--';
-      return date.toLocaleTimeString(lang === 'zh' ? 'zh-TW' : 'en-US', {
-        timeZone: 'Asia/Taipei',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false
-      });
-    } catch (e) {
-      return date.toLocaleTimeString();
-    }
-  };
-
-  const stats = useMemo(() => {
-    const groupCounts = {};
-    // Only count valid code usages for the "Remaining" stat
-    const usedCodesCount = checkins.filter(c => c.code && VALID_CODES.includes(c.code)).length;
-    
-    checkins.forEach(c => {
-      if (c.group) {
-        groupCounts[c.group] = (groupCounts[c.group] || 0) + 1;
-      }
-    });
-    
-    return {
-      total: checkins.length,
-      groupCounts,
-      usedCodesCount
-    };
-  }, [checkins]);
-
-  return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 font-sans selection:bg-indigo-100 pb-12">
-      {/* Header */}
-      <header className="bg-white shadow-sm border-b border-slate-200 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="bg-indigo-600 p-2 rounded-lg">
-              <BrainCircuit className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-slate-900 leading-none hidden sm:block">PMCS</h1>
-              <span className="text-xs text-slate-500 font-medium tracking-wider">AI PRODUCT MANAGER</span>
-            </div>
-          </div>
-          
-          <button 
-            onClick={toggleLang}
-            className="flex items-center space-x-2 px-3 py-1.5 rounded-full bg-slate-100 hover:bg-slate-200 transition-colors text-sm font-medium text-slate-700"
-          >
-            <Globe className="w-4 h-4" />
-            <span>{t.language}</span>
-          </button>
-        </div>
-      </header>
-
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Title Section */}
-        <div className="text-center mb-10 max-w-3xl mx-auto">
-          <h2 className="text-3xl md:text-4xl font-extrabold text-slate-900 mb-3 bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-violet-600">
-            {t.title}
-          </h2>
-          <p className="text-lg text-slate-600 font-medium">
-            {t.subtitle}
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          
-          {/* Left Column: Check-in Form */}
-          <div className="lg:col-span-5 xl:col-span-4">
-            <div className="bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden sticky top-24">
-              <div className="bg-indigo-600 px-6 py-4 flex items-center justify-between">
-                <h3 className="text-white font-semibold flex items-center space-x-2">
-                  <UserCheck className="w-5 h-5" />
-                  <span>{t.checkIn}</span>
-                </h3>
-              </div>
-              
-              <div className="p-6">
-                {submitted ? (
-                  <div className="text-center py-8 animate-in fade-in zoom-in duration-300">
-                    <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-100 mb-4">
-                      <CheckCircle className="w-8 h-8 text-green-600" />
-                    </div>
-                    <h3 className="text-xl font-bold text-slate-900 mb-2">{t.success}</h3>
-                    <button 
-                      onClick={() => setSubmitted(false)}
-                      className="mt-4 text-indigo-600 font-medium hover:text-indigo-800 underline"
-                    >
-                      Check in another
-                    </button>
-                  </div>
-                ) : (
-                  <form onSubmit={handleSubmit} className="space-y-5">
-                    {/* Chinese Name */}
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">
-                        {t.cnName} <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        name="cnName"
-                        required
-                        value={formData.cnName}
-                        onChange={handleInputChange}
-                        placeholder={t.placeholderCn}
-                        className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-                      />
-                    </div>
-
-                    {/* English Name */}
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">
-                        {t.enName}
-                      </label>
-                      <input
-                        type="text"
-                        name="enName"
-                        value={formData.enName}
-                        onChange={handleInputChange}
-                        placeholder={t.placeholderEn}
-                        className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-                      />
-                    </div>
-
-                    {/* Group Dropdown */}
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">
-                        {t.group} <span className="text-red-500">*</span>
-                      </label>
-                      <div className="relative">
-                        <Users className="absolute left-3 top-2.5 w-5 h-5 text-slate-400 pointer-events-none" />
-                        <select
-                          name="group"
-                          required
-                          value={formData.group}
-                          onChange={handleInputChange}
-                          className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all appearance-none bg-white"
-                        >
-                          <option value="" disabled>{t.selectGroup}</option>
-                          {[1, 2, 3, 4, 5].map(num => (
-                            <option key={num} value={num}>
-                              {lang === 'zh' ? `${t.groupOption} ${num} ${t.groupSuffix}` : `${t.groupOption} ${num}`}
-                            </option>
-                          ))}
-                        </select>
-                        <div className="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none text-slate-500">
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Verification Code */}
-                    <div className="pt-2 border-t border-slate-100">
-                      <label className="block text-sm font-medium text-slate-700 mb-1">
-                        {t.code} <span className="text-red-500">*</span>
-                      </label>
-                      <div className="relative">
-                        <Ticket className="absolute left-3 top-2.5 w-5 h-5 text-indigo-400" />
-                        <input
-                          type="text"
-                          name="code"
-                          required
-                          value={formData.code}
-                          onChange={handleInputChange}
-                          placeholder={t.placeholderCode}
-                          className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all bg-slate-50 tracking-widest font-mono uppercase"
-                          maxLength={4}
-                        />
-                      </div>
-                      {errorMsg && (
-                         <div className="flex items-start mt-2 space-x-1 text-red-500 text-sm animate-pulse">
-                            <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                            <span>{errorMsg}</span>
-                         </div>
-                      )}
-                    </div>
-
-                    <button
-                      type="submit"
-                      disabled={loading}
-                      className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-4 rounded-lg shadow-md transition-all transform active:scale-95 flex items-center justify-center space-x-2 disabled:opacity-70 disabled:cursor-not-allowed"
-                    >
-                      {loading ? (
-                        <span>{t.submitting}</span>
-                      ) : (
-                        <>
-                          <Send className="w-4 h-4" />
-                          <span>{t.submit}</span>
-                        </>
-                      )}
-                    </button>
-                  </form>
-                )}
-              </div>
-            </div>
-            
-            {/* Teacher Info (Subtle) */}
-            <div className="mt-4 text-center">
-              <p className="text-xs text-slate-400">
-                {t.remainingCodes}: {Math.max(0, VALID_CODES.length - stats.usedCodesCount)} / {VALID_CODES.length}
-              </p>
-            </div>
-          </div>
-
-          {/* Right Column: Dashboard */}
-          <div className="lg:col-span-7 xl:col-span-8 space-y-6">
-            
-            {/* Stats Cards */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center space-x-4">
-                <div className="p-3 bg-blue-50 text-blue-600 rounded-lg">
-                  <LayoutDashboard className="w-6 h-6" />
+    <!-- Header -->
+    <header class="bg-white shadow-sm border-b border-slate-200 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="bg-indigo-600 p-2 rounded-lg">
+                    <i data-lucide="brain-circuit" class="w-6 h-6 text-white"></i>
                 </div>
                 <div>
-                  <p className="text-sm text-slate-500">{t.totalCount}</p>
-                  <p className="text-2xl font-bold text-slate-900">{stats.total}</p>
+                    <h1 class="text-xl font-bold text-slate-900 leading-none hidden sm:block">PMCS</h1>
+                    <span class="text-xs text-slate-500 font-medium tracking-wider">AI PRODUCT MANAGER</span>
                 </div>
-              </div>
-              <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center space-x-4">
-                <div className="p-3 bg-violet-50 text-violet-600 rounded-lg">
-                  <Clock className="w-6 h-6" />
-                </div>
-                <div>
-                  <p className="text-sm text-slate-500">{t.latest}</p>
-                  <p className="text-2xl font-bold text-slate-900">
-                    {checkins.length > 0 ? formatTime(checkins[0].timestamp) : '--:--'}
-                  </p>
-                </div>
-              </div>
             </div>
-
-            {/* Live List */}
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col min-h-[500px]">
-              <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-                <h3 className="font-semibold text-slate-800 flex items-center space-x-2">
-                  <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                  <span>{t.recentCheckins}</span>
-                </h3>
-              </div>
-
-              <div className="flex-1 overflow-auto max-h-[600px] p-4">
-                {checkins.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-4">
-                    <Users className="w-16 h-16 opacity-20" />
-                    <p>{t.waiting}</p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {checkins.map((student) => (
-                      <div 
-                        key={student.id}
-                        className="group flex items-center justify-between p-4 rounded-xl bg-slate-50 border border-slate-100 hover:bg-white hover:shadow-md transition-all duration-200"
-                      >
-                        <div className="flex items-center space-x-4">
-                          <div className="flex-shrink-0 w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center font-bold text-lg shadow-sm">
-                            {student.group}
-                          </div>
-                          <div>
-                            <h4 className="font-bold text-slate-900 text-lg leading-tight">
-                              {student.cnName}
-                            </h4>
-                            {student.enName && (
-                              <p className="text-sm text-slate-500 font-medium">
-                                {student.enName}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex flex-col items-end space-y-1">
-                          <div className="flex items-center space-x-2 text-slate-400 text-sm bg-white px-2 py-1 rounded-md shadow-sm border border-slate-100">
-                            <Clock className="w-3 h-3" />
-                            <span>{formatTime(student.timestamp)}</span>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-          </div>
+            
+            <button id="lang-toggle" class="flex items-center space-x-2 px-3 py-1.5 rounded-full bg-slate-100 hover:bg-slate-200 transition-colors text-sm font-medium text-slate-700">
+                <i data-lucide="globe" class="w-4 h-4"></i>
+                <span id="lang-label">English</span>
+            </button>
         </div>
-      </main>
-    </div>
-  );
-}
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <!-- Title Section -->
+        <div class="text-center mb-10 max-w-3xl mx-auto">
+            <h2 id="page-title" class="text-3xl md:text-4xl font-extrabold text-slate-900 mb-3 bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-violet-600">
+                PMCS 課程點名系統
+            </h2>
+            <p id="page-subtitle" class="text-lg text-slate-600 font-medium">
+                AI世代產品經理職涯策略與專案管理導論
+            </p>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            
+            <!-- Left Column: Check-in Form -->
+            <div class="lg:col-span-5 xl:col-span-4">
+                <div class="bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden sticky top-24">
+                    <div class="bg-indigo-600 px-6 py-4 flex items-center justify-between">
+                        <h3 class="text-white font-semibold flex items-center space-x-2">
+                            <i data-lucide="user-check" class="w-5 h-5"></i>
+                            <span id="form-header">學生簽到</span>
+                        </h3>
+                    </div>
+                    
+                    <div class="p-6">
+                        <!-- Success View (Hidden by default) -->
+                        <div id="success-view" class="hidden text-center py-8 animate-fade-in-zoom">
+                            <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-100 mb-4">
+                                <i data-lucide="check-circle" class="w-8 h-8 text-green-600"></i>
+                            </div>
+                            <h3 id="success-msg" class="text-xl font-bold text-slate-900 mb-2">簽到成功！</h3>
+                            <button id="reset-btn" class="mt-4 text-indigo-600 font-medium hover:text-indigo-800 underline">
+                                Check in another
+                            </button>
+                        </div>
+
+                        <!-- Form View -->
+                        <form id="checkin-form" class="space-y-5">
+                            <!-- Chinese Name -->
+                            <div>
+                                <label class="block text-sm font-medium text-slate-700 mb-1">
+                                    <span id="label-cn">中文姓名</span> <span class="text-red-500">*</span>
+                                </label>
+                                <input type="text" id="cnName" required class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all">
+                            </div>
+
+                            <!-- English Name -->
+                            <div>
+                                <label class="block text-sm font-medium text-slate-700 mb-1">
+                                    <span id="label-en">英文姓名</span>
+                                </label>
+                                <input type="text" id="enName" class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all">
+                            </div>
+
+                            <!-- Group Dropdown -->
+                            <div>
+                                <label class="block text-sm font-medium text-slate-700 mb-1">
+                                    <span id="label-group">分組組別</span> <span class="text-red-500">*</span>
+                                </label>
+                                <div class="relative">
+                                    <i data-lucide="users" class="absolute left-3 top-2.5 w-5 h-5 text-slate-400 pointer-events-none"></i>
+                                    <select id="group" required class="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all appearance-none bg-white">
+                                        <option value="" disabled selected id="opt-default">請選擇組別</option>
+                                        <option value="1">Group 1</option>
+                                        <option value="2">Group 2</option>
+                                        <option value="3">Group 3</option>
+                                        <option value="4">Group 4</option>
+                                        <option value="5">Group 5</option>
+                                    </select>
+                                    <div class="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none text-slate-500">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Verification Code -->
+                            <div class="pt-2 border-t border-slate-100">
+                                <label class="block text-sm font-medium text-slate-700 mb-1">
+                                    <span id="label-code">專屬驗證碼</span> <span class="text-red-500">*</span>
+                                </label>
+                                <div class="relative">
+                                    <i data-lucide="ticket" class="absolute left-3 top-2.5 w-5 h-5 text-indigo-400"></i>
+                                    <input type="text" id="code" required maxlength="4" class="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all bg-slate-50 tracking-widest font-mono uppercase">
+                                </div>
+                                <div id="error-container" class="hidden flex items-start mt-2 space-x-1 text-red-500 text-sm animate-pulse">
+                                    <i data-lucide="alert-circle" class="w-4 h-4 mt-0.5 flex-shrink-0"></i>
+                                    <span id="error-msg">Error message</span>
+                                </div>
+                            </div>
+
+                            <button type="submit" id="submit-btn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-4 rounded-lg shadow-md transition-all transform active:scale-95 flex items-center justify-center space-x-2 disabled:opacity-70 disabled:cursor-not-allowed">
+                                <i data-lucide="send" class="w-4 h-4"></i>
+                                <span id="btn-text">送出簽到</span>
+                            </button>
+                        </form>
+                    </div>
+                </div>
+                
+                <!-- Teacher Info -->
+                <div class="mt-4 text-center">
+                    <p class="text-xs text-slate-400">
+                        <span id="remaining-label">剩餘可用代碼</span>: <span id="remaining-count">--</span>
+                    </p>
+                </div>
+            </div>
+
+            <!-- Right Column: Dashboard -->
+            <div class="lg:col-span-7 xl:col-span-8 space-y-6">
+                
+                <!-- Stats Cards -->
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center space-x-4">
+                        <div class="p-3 bg-blue-50 text-blue-600 rounded-lg">
+                            <i data-lucide="layout-dashboard" class="w-6 h-6"></i>
+                        </div>
+                        <div>
+                            <p id="label-total" class="text-sm text-slate-500">已簽到人數</p>
+                            <p id="stat-total" class="text-2xl font-bold text-slate-900">0</p>
+                        </div>
+                    </div>
+                    <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center space-x-4">
+                        <div class="p-3 bg-violet-50 text-violet-600 rounded-lg">
+                            <i data-lucide="clock" class="w-6 h-6"></i>
+                        </div>
+                        <div>
+                            <p id="label-latest" class="text-sm text-slate-500">最新動態</p>
+                            <p id="stat-latest" class="text-2xl font-bold text-slate-900">--:--</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Live List -->
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col min-h-[500px]">
+                    <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+                        <h3 class="font-semibold text-slate-800 flex items-center space-x-2">
+                            <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                            <span id="list-header">最新簽到名單</span>
+                        </h3>
+                    </div>
+
+                    <div id="list-container" class="flex-1 overflow-auto max-h-[600px] p-4">
+                        <!-- Content injected via JS -->
+                        <div class="h-full flex flex-col items-center justify-center text-slate-400 space-y-4">
+                            <i data-lucide="users" class="w-16 h-16 opacity-20"></i>
+                            <p id="waiting-text">等待簽到中...</p>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </main>
+
+    <!-- App Logic -->
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
+        import { 
+            getAuth, 
+            signInAnonymously, 
+            onAuthStateChanged, 
+            signInWithCustomToken 
+        } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
+        import { 
+            getFirestore, 
+            collection, 
+            addDoc, 
+            onSnapshot, 
+            query, 
+            serverTimestamp 
+        } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
+
+        // --- Configuration ---
+        const VALID_CODES = [
+            // Group 1
+            "1088", "1243", "1597", "1821", "1905",
+            // Group 2
+            "2156", "2384", "2609", "2972",
+            // Group 3
+            "3042", "3218", "3567", "3891", "3955",
+            // Group 4
+            "4129", "4483", "4675", "4908",
+            // Group 5
+            "5234", "5512", "5789", "5946"
+        ];
+
+        const TRANSLATIONS = {
+            en: {
+                title: "PMCS Check-in System",
+                subtitle: "Introduction to Project Management and Career Strategy as a Product Manager in the AI era",
+                checkIn: "Check In",
+                dashboard: "Live Dashboard",
+                cnName: "Chinese Name",
+                enName: "English Name",
+                group: "Group Number",
+                code: "Access Code",
+                submit: "Submit Attendance",
+                submitting: "Submitting...",
+                success: "Check-in Successful!",
+                recentCheckins: "Recent Check-ins",
+                totalCount: "Total Checked In",
+                latest: "Latest Activity",
+                placeholderCn: "e.g., 王小明",
+                placeholderEn: "e.g., Jeremy Wang",
+                placeholderCode: "4-digit code (starts with group #)",
+                selectGroup: "Select Group",
+                groupOption: "Group",
+                waiting: "Waiting for check-ins...",
+                time: "Time (CST)",
+                language: "中文",
+                errorFill: "Please fill in all required fields.",
+                errorCode: "Invalid Code. Please contact TA.",
+                errorCodeUsed: "This code has already been used.",
+                errorGroupMatch: "Code must start with your Group Number (e.g., Group 1 uses 1xxx).",
+                remainingCodes: "Codes Remaining",
+                checkInAnother: "Check in another"
+            },
+            zh: {
+                title: "PMCS 課程點名系統",
+                subtitle: "AI世代產品經理職涯策略與專案管理導論",
+                checkIn: "學生簽到",
+                dashboard: "即時看板",
+                cnName: "中文姓名",
+                enName: "英文姓名",
+                group: "分組組別",
+                code: "專屬驗證碼",
+                submit: "送出簽到",
+                submitting: "送出中...",
+                success: "簽到成功！",
+                recentCheckins: "最新簽到名單",
+                totalCount: "已簽到人數",
+                latest: "最新動態",
+                placeholderCn: "例如：王小明",
+                placeholderEn: "例如：Jeremy Wang",
+                placeholderCode: "4 碼數字 (首碼需與組別相同)",
+                selectGroup: "請選擇組別",
+                groupOption: "第", 
+                groupSuffix: "組",
+                waiting: "等待簽到中...",
+                time: "時間 (中原標準)",
+                language: "English",
+                errorFill: "請填寫所有必填欄位。",
+                errorCode: "驗證碼無效，請洽詢助教 (TA)。",
+                errorCodeUsed: "此驗證碼已被使用，請勿重複簽到。",
+                errorGroupMatch: "驗證碼首碼必須與您的組別相符 (例：第 1 組需輸入 1xxx)。",
+                remainingCodes: "剩餘可用代碼",
+                checkInAnother: "回到簽到頁"
+            }
+        };
+
+        // --- State ---
+        const state = {
+            lang: 'zh',
+            user: null,
+            checkins: [],
+            loading: false
+        };
+
+        // --- Firebase Init ---
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        
+        // Safety check for environment
+        if (!firebaseConfig.apiKey) {
+            console.error("Firebase config missing. This file must be run in the correct environment.");
+        } else {
+            const app = initializeApp(firebaseConfig);
+            const auth = getAuth(app);
+            const db = getFirestore(app);
+
+            // Auth Logic
+            const initAuth = async () => {
+                try {
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                } catch (e) {
+                    console.error("Auth error", e);
+                }
+            };
+
+            initAuth();
+            onAuthStateChanged(auth, (user) => {
+                state.user = user;
+                if (user) startListener(db);
+            });
+        }
+
+        // --- Firestore Listener ---
+        function startListener(db) {
+            const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'pmcs_checkins'));
+            
+            onSnapshot(q, (snapshot) => {
+                const data = snapshot.docs.map(doc => ({
+                    id: doc.id,
+                    ...doc.data(),
+                    timestamp: doc.data().timestamp?.toDate() || new Date()
+                }));
+                // Sort descending by time
+                data.sort((a, b) => b.timestamp - a.timestamp);
+                state.checkins = data;
+                renderApp();
+            }, (error) => {
+                console.error("Error fetching checkins:", error);
+            });
+        }
+
+        // --- UI Rendering ---
+        function renderApp() {
+            renderTexts();
+            renderStats();
+            renderList();
+        }
+
+        function renderTexts() {
+            const t = TRANSLATIONS[state.lang];
+            
+            // Text Elements
+            document.getElementById('page-title').textContent = t.title;
+            document.getElementById('page-subtitle').textContent = t.subtitle;
+            document.getElementById('form-header').textContent = t.checkIn;
+            document.getElementById('success-msg').textContent = t.success;
+            document.getElementById('reset-btn').textContent = t.checkInAnother;
+            
+            // Labels
+            document.getElementById('label-cn').textContent = t.cnName;
+            document.getElementById('label-en').textContent = t.enName;
+            document.getElementById('label-group').textContent = t.group;
+            document.getElementById('label-code').textContent = t.code;
+            
+            // Placeholders
+            document.getElementById('cnName').placeholder = t.placeholderCn;
+            document.getElementById('enName').placeholder = t.placeholderEn;
+            document.getElementById('code').placeholder = t.placeholderCode;
+            
+            // Group Options
+            const groupSelect = document.getElementById('group');
+            const opts = groupSelect.options;
+            opts[0].textContent = t.selectGroup;
+            for(let i=1; i<=5; i++) {
+                opts[i].textContent = state.lang === 'zh' 
+                    ? `${t.groupOption} ${i} ${t.groupSuffix}` 
+                    : `${t.groupOption} ${i}`;
+            }
+
+            // Stats Headers
+            document.getElementById('label-total').textContent = t.totalCount;
+            document.getElementById('label-latest').textContent = t.latest;
+            document.getElementById('list-header').textContent = t.recentCheckins;
+            document.getElementById('remaining-label').textContent = t.remainingCodes;
+            
+            // Button state
+            const btnText = document.getElementById('btn-text');
+            if (state.loading) {
+                btnText.textContent = t.submitting;
+            } else {
+                btnText.textContent = t.submit;
+            }
+
+            // Language Button
+            document.getElementById('lang-label').textContent = t.language;
+            document.getElementById('waiting-text').textContent = t.waiting;
+        }
+
+        function renderStats() {
+            const total = state.checkins.length;
+            const latest = state.checkins.length > 0 ? formatTime(state.checkins[0].timestamp) : '--:--';
+            
+            document.getElementById('stat-total').textContent = total;
+            document.getElementById('stat-latest').textContent = latest;
+
+            // Remaining Codes
+            const usedCodesCount = state.checkins.filter(c => c.code && VALID_CODES.includes(c.code)).length;
+            const remaining = Math.max(0, VALID_CODES.length - usedCodesCount);
+            document.getElementById('remaining-count').textContent = `${remaining} / ${VALID_CODES.length}`;
+        }
+
+        function renderList() {
+            const container = document.getElementById('list-container');
+            
+            if (state.checkins.length === 0) {
+                container.innerHTML = `
+                    <div class="h-full flex flex-col items-center justify-center text-slate-400 space-y-4">
+                        <i data-lucide="users" class="w-16 h-16 opacity-20"></i>
+                        <p>${TRANSLATIONS[state.lang].waiting}</p>
+                    </div>
+                `;
+            } else {
+                container.innerHTML = `<div class="space-y-3">
+                    ${state.checkins.map(student => `
+                        <div class="group flex items-center justify-between p-4 rounded-xl bg-slate-50 border border-slate-100 hover:bg-white hover:shadow-md transition-all duration-200">
+                            <div class="flex items-center space-x-4">
+                                <div class="flex-shrink-0 w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center font-bold text-lg shadow-sm">
+                                    ${student.group}
+                                </div>
+                                <div>
+                                    <h4 class="font-bold text-slate-900 text-lg leading-tight">
+                                        ${escapeHtml(student.cnName)}
+                                    </h4>
+                                    ${student.enName ? `
+                                        <p class="text-sm text-slate-500 font-medium">
+                                            ${escapeHtml(student.enName)}
+                                        </p>
+                                    ` : ''}
+                                </div>
+                            </div>
+                            <div class="flex flex-col items-end space-y-1">
+                                <div class="flex items-center space-x-2 text-slate-400 text-sm bg-white px-2 py-1 rounded-md shadow-sm border border-slate-100">
+                                    <i data-lucide="clock" class="w-3 h-3"></i>
+                                    <span>${formatTime(student.timestamp)}</span>
+                                </div>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>`;
+            }
+            // Re-init icons for new DOM elements
+            lucide.createIcons();
+        }
+
+        // --- Utils ---
+        function formatTime(date) {
+            try {
+                if (!date) return '--:--';
+                return date.toLocaleTimeString(state.lang === 'zh' ? 'zh-TW' : 'en-US', {
+                    timeZone: 'Asia/Taipei',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: false
+                });
+            } catch (e) {
+                return date.toLocaleTimeString();
+            }
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            return text
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        function toggleError(msg) {
+            const errContainer = document.getElementById('error-container');
+            const errMsg = document.getElementById('error-msg');
+            if (msg) {
+                errMsg.textContent = msg;
+                errContainer.classList.remove('hidden');
+            } else {
+                errContainer.classList.add('hidden');
+            }
+        }
+
+        function toggleSuccess(show) {
+            const form = document.getElementById('checkin-form');
+            const successView = document.getElementById('success-view');
+            
+            if (show) {
+                form.classList.add('hidden');
+                successView.classList.remove('hidden');
+            } else {
+                form.classList.remove('hidden');
+                successView.classList.add('hidden');
+                // Reset form fields
+                document.getElementById('cnName').value = '';
+                document.getElementById('enName').value = '';
+                document.getElementById('group').value = '';
+                document.getElementById('code').value = '';
+            }
+        }
+
+        // --- Event Listeners ---
+        document.getElementById('lang-toggle').addEventListener('click', () => {
+            state.lang = state.lang === 'en' ? 'zh' : 'en';
+            renderApp();
+        });
+
+        // Auto-uppercase code input
+        document.getElementById('code').addEventListener('input', (e) => {
+            e.target.value = e.target.value.toUpperCase();
+            toggleError(''); // Clear error on input
+        });
+
+        document.getElementById('reset-btn').addEventListener('click', () => {
+            toggleSuccess(false);
+        });
+
+        document.getElementById('checkin-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            toggleError('');
+            const t = TRANSLATIONS[state.lang];
+
+            if (!state.user) return;
+
+            const cnName = document.getElementById('cnName').value.trim();
+            const enName = document.getElementById('enName').value.trim();
+            const group = document.getElementById('group').value;
+            const code = document.getElementById('code').value.trim();
+
+            // 1. Basic Validation
+            if (!cnName || !group || !code) {
+                toggleError(t.errorFill);
+                return;
+            }
+
+            // 2. Group Prefix
+            if (!code.startsWith(group)) {
+                toggleError(t.errorGroupMatch);
+                return;
+            }
+
+            // 3. Valid List
+            if (!VALID_CODES.includes(code)) {
+                toggleError(t.errorCode);
+                return;
+            }
+
+            // 4. Duplicate Check
+            const used = state.checkins.some(record => record.code === code);
+            if (used) {
+                toggleError(t.errorCodeUsed);
+                return;
+            }
+
+            // Submit
+            state.loading = true;
+            renderTexts(); // Update button state
+            
+            try {
+                // Dynamic Import needed? No, module scope is fine.
+                // We access the module-level 'addDoc' etc.
+                const { getFirestore, collection, addDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js');
+                const db = getFirestore();
+                
+                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'pmcs_checkins'), {
+                    cnName,
+                    enName,
+                    group,
+                    code,
+                    userId: state.user.uid,
+                    timestamp: serverTimestamp()
+                });
+
+                toggleSuccess(true);
+            } catch (error) {
+                console.error("Submit error", error);
+                toggleError("Error submitting. Please try again.");
+            } finally {
+                state.loading = false;
+                renderTexts();
+            }
+        });
+
+        // Initialize Icons & Text
+        lucide.createIcons();
+        renderApp();
+    </script>
+</body>
+</html>
